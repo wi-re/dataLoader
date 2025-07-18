@@ -98,6 +98,7 @@ except ImportError as e:
 
 
 import copy
+from neighborhood import AugmentedDomainDescription
 
 def loadDiffSPHState(inFile, key, configuration, device, dtype):
 
@@ -127,11 +128,14 @@ def loadDiffSPHState(inFile, key, configuration, device, dtype):
         trajectoryStates = []
 
 
-    domain = DomainDescription(
+    domain = AugmentedDomainDescription(
         min = torch.tensor(inFile['domain'].attrs['min'], device = device, dtype = dtype),
         max = torch.tensor(inFile['domain'].attrs['max'], device = device, dtype = dtype),
         periodic = torch.tensor(inFile['domain'].attrs['periodic'], device = device, dtype = torch.bool),
-        dim = len(inFile['domain'].attrs['min'])
+        dim = len(inFile['domain'].attrs['min']),
+        angles = [0.0] * (len(inFile['domain'].attrs['min']) - 1), 
+        device = device,
+        dtype = dtype
     )
 
     parsedConfig = {}

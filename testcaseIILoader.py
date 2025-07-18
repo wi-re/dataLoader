@@ -218,6 +218,8 @@ def loadFrame_testcase_II(inFile, key, device = 'cpu', dtype = torch.float32):
 
 from state import WeaklyCompressibleSPHState, convertNewFormatToWCSPH
 
+from neighborhood import AugmentedDomainDescription
+
 def loadTestcaseIIState(inFile, key, configuration : DataConfiguration, device = 'cpu', dtype = torch.float32):
 
     currentState, attributes, config = loadFrame_testcase_II(inFile, key, device = device, dtype = dtype)
@@ -249,11 +251,14 @@ def loadTestcaseIIState(inFile, key, configuration : DataConfiguration, device =
     else: 
         trajectoryStates = []
 
-    domain = DomainDescription(
+    domain = AugmentedDomainDescription(
         min = torch.tensor([-1.2, -1.2], device = device, dtype = dtype),
         max = torch.tensor([1.2, 1.2], device = device, dtype = dtype),
         periodic = torch.tensor([False, False], device = device, dtype = torch.bool),
-        dim = 2
+        dim = 2,
+        angles = [0.0],
+        device = device,
+        dtype = dtype
     )
 
     return priorStates, currentState, trajectoryStates, domain, config

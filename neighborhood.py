@@ -14,8 +14,53 @@ except ImportError as e:
     from fallback import CompactHashMap, radiusSearch, PointCloud, DomainDescription, SparseCOO, SparseCSR
     
 from dataclasses import dataclass
+from typing import List
 
-@dataclass#(slots = True)
+@torch.jit.script
+@dataclass(slots=True)
+class AugmentedDomainDescription:
+    """
+    A named tuple containing the minimum and maximum domain values.
+    """
+    min: torch.Tensor
+    max: torch.Tensor
+    periodic: torch.Tensor
+    dim: int
+
+    angles: List[float] = None,
+    device: torch.device = None,
+    dtype: torch.dtype = None
+
+    def __ne__(self, other: 'AugmentedDomainDescription') -> bool:
+        return not self.__eq__(other)
+    
+    def __init__(self, min, max, periodic, dim, angles=None, device=None, dtype=None):
+        self.min = min
+        self.max = max
+        self.periodic = periodic
+        self.dim = dim
+        self.angles = angles if angles is not None else [0.0] * (dim - 1)
+        self.device = device if device is not None else torch.device('cpu')
+        self.dtype = dtype if dtype is not None else torch.float32
+
+from typing import Union
+def domainToAugmented(dom : Union[DomainDescription, AugmentedDomainDescription]) -> AugmentedDomainDescription:
+    if isinstance(dom, AugmentedDomainDescription):
+        return dom
+    elif isinstance(dom, DomainDescription):
+        return AugmentedDomainDescription(
+            min = dom.min,
+            max = dom.max,
+            periodic = dom.periodic,
+            dim = dom.dim,
+            angles = [0.0] * (dom.dim - 1),
+            device = dom.min.device,
+            dtype = dom.min.dtype
+        )
+    else:
+        raise TypeError(f"Unsupported domain type: {type(dom)}")
+
+@dataclass(slots=True)
 class SparseNeighborhood:
     row: torch.Tensor
     col: torch.Tensor
@@ -26,7 +71,7 @@ class SparseNeighborhood:
     points_a: 'PointCloud'
     points_b: 'PointCloud'
     
-    domain: 'DomainDescription'
+    domain: 'AugmentedDomainDescription'
 
 def filterNeighborhoodByKind(particleState, sparseNeighborhood : SparseNeighborhood, which : str = 'normal'):
     if which == 'all':
@@ -108,12 +153,30 @@ def evalEdgeKinds(kinds : torch.Tensor, i : torch.Tensor, j: torch.Tensor):
 
     return out, outSorted, torch.sum(mask_ftf), torch.sum(mask_btf), torch.sum(mask_ftb), torch.sum(mask_btb), torch.sum(mask_ftg)
 
+
+
+from augment import buildRotationMatrix
 def neighborSearch(state, domain, config):
     points = PointCloud(state.positions, state.supports)
+    if isinstance(domain, AugmentedDomainDescription):
+        rotationMatrix = buildRotationMatrix(torch.tensor(domain.angles, device=domain.device, dtype=domain.dtype), domain.dim, device=domain.device, dtype=domain.dtype)
+        invRotationMatrix = torch.linalg.inv(rotationMatrix)
+        # print(f'Using angles: {domain.angles}, rotation matrix: {rotationMatrix}')
+        points = PointCloud(
+            positions=torch.einsum('ij, ni->nj', invRotationMatrix, points.positions),
+            supports=points.supports
+        )
+
+
     fullAdjacency = radiusSearch(
         points,
         points,
-        domain = domain,
+        domain = DomainDescription(
+            domain.min, 
+            domain.max, 
+            domain.periodic, 
+            points.positions.shape[0]
+        ),
         mode = 'superSymmetric',
         returnStructure=False,
         algorithm='compact'
@@ -123,8 +186,8 @@ def neighborSearch(state, domain, config):
         col = fullAdjacency.col,
         numRows = fullAdjacency.numRows,
         numCols = fullAdjacency.numCols,
-        points_a = points,
-        points_b = points,
+        points_a = PointCloud(state.positions, state.supports),
+        points_b = PointCloud(state.positions, state.supports),
         domain = domain
     )
     indices, indicesSorted, numFluidToFluid, numBoundaryToFluid, numFluidToBoundary, numBoundaryToBoundary, numFluidToGhost = evalEdgeKinds(state.kinds, sparseNeighborhood.row, sparseNeighborhood.col)
@@ -170,3 +233,75 @@ def coo_to_csr(coo: SparseCOO, isSorted: bool = False) -> SparseCSR:
     rowEntries = nj
 
     return SparseCSR(indices, indptr, rowEntries, coo.numRows, coo.numCols)
+
+
+from typing import Optional
+@torch.jit.script
+def mod(x, min : float, max : float):
+    h = max - min
+    return ((x + h / 2.0) - torch.floor((x + h / 2.0) / h) * h) - h / 2.0
+def evalDistanceTensor_(
+        row: torch.Tensor, col: torch.Tensor,
+        minD: torch.Tensor, maxD: torch.Tensor, periodicity: torch.Tensor,
+
+        positions_a: torch.Tensor, positions_b: torch.Tensor,
+        support_a: torch.Tensor, support_b: torch.Tensor,
+        angles: Optional[torch.Tensor] = None,):
+    # print('evalDistanceTensor Begin')
+    pos_ai = positions_a[row]
+    pos_bi = positions_b[col]
+    h_i = support_a[row]
+    h_j = support_b[col] 
+    if angles is not None:
+        rotMat = buildRotationMatrix(angles, positions_a.shape[-1], device=positions_a.device, dtype=positions_a.dtype)
+
+        pos_ai = torch.matmul(pos_ai, rotMat.T)
+        pos_bi = torch.matmul(pos_bi, rotMat.T)
+
+
+    # minD = neighborhood.domain.min
+    # maxD = neighborhood.domain.max
+    # periodicity = neighborhood.domain.periodic
+    # if mode == SupportScheme.Symmetric:
+    #     support_ai = support_a[row]
+    #     support_bi = support_b[col]
+    #     hij = (support_ai + support_bi) / 2
+    # elif mode == SupportScheme.Scatter:
+    #     support_bi = support_b[col]
+    #     hij = support_bi
+    # elif mode == SupportScheme.Gather:
+    #     support_ai = support_a[row]
+    #     hij = support_ai 
+    # elif mode == SupportScheme.SuperSymmetric:
+    #     support_ai = support_a[row]
+    #     support_bi = support_b[col]
+    #     hij = torch.maximum(support_ai, support_bi)
+    # else:
+    #     raise ValueError('Invalid mode')
+
+    xij = pos_ai - pos_bi
+    xij_ = torch.stack([xij[:,i] if not periodic_i else mod(xij[:,i], minD[i], maxD[i]) for i, periodic_i in enumerate(periodicity)], dim = -1)
+
+    if angles is not None:
+        xij_ = torch.matmul(xij_, rotMat)
+        # print(f'Using angles: {angles}, rotation matrix: {rotMat}')
+
+    distance = torch.linalg.norm(xij_, dim = -1)
+    # if normalize:
+    #     xij = torch.nn.functional.normalize(xij, dim = -1)
+    #     rij = distance / hij
+    # else:
+    rij = distance
+    # print('evalDistanceTensor End')
+    return rij, xij_, h_i, h_j
+
+def evalDistanceTensor(neighborhood):
+    # print('evalDistanceTensor Begin')
+    return evalDistanceTensor_(
+        neighborhood.row, neighborhood.col,
+        neighborhood.domain.min, neighborhood.domain.max,
+        neighborhood.domain.periodic,
+        neighborhood.points_a.positions, neighborhood.points_b.positions,
+        neighborhood.points_a.supports, neighborhood.points_b.supports,
+        torch.tensor(neighborhood.domain.angles, dtype = neighborhood.points_a.positions.dtype, device = neighborhood.points_a.positions.device) if isinstance(neighborhood.domain, AugmentedDomainDescription) else None
+    )

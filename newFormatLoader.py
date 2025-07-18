@@ -550,6 +550,7 @@ try:
     from torchCompactRadius.util import DomainDescription
 except ImportError:
     from fallback import DomainDescription
+from neighborhood import AugmentedDomainDescription
 
 def loadNewFormatState(inFile, key, configuration : DataConfiguration, device = 'cpu', dtype = torch.float32):
 
@@ -583,11 +584,14 @@ def loadNewFormatState(inFile, key, configuration : DataConfiguration, device = 
 
     # print(config['domain'])
 
-    domain = DomainDescription(
+    domain = AugmentedDomainDescription(
         min = torch.tensor(config['domain']['minExtent'][:], device = device, dtype = dtype),
         max = torch.tensor(config['domain']['maxExtent'][:], device = device, dtype = dtype),
         periodic = torch.tensor(config['domain']['periodicity'][:], device = device, dtype = torch.bool),
-        dim = 2
+        dim = 2,
+        angles = [0.0],
+        device = device,
+        dtype = dtype
     )
 
     return priorStates, currentState, trajectoryStates, domain, config
