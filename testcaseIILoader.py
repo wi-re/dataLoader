@@ -51,7 +51,7 @@ def loadGroup_testcaseII(inFile, inGrp, staticBoundaryData, device = 'cpu', dtyp
             'positions': torch.from_numpy(inGrp['fluidPosition'][:]).to(device = device, dtype = dtype),
             'velocities': torch.from_numpy(inGrp['fluidVelocity'][:]).to(device = device, dtype = dtype),
             'gravityAcceleration': torch.from_numpy(inGrp['fluidGravity'][:]).to(device = device, dtype = dtype) if 'fluidGravity' not in inFile.attrs else torch.from_numpy(inFile.attrs['fluidGravity']).to(device = device, dtype = dtype) * torch.ones(inGrp['fluidDensity'][:].shape[0]).to(device = device, dtype = dtype)[:,None],
-            'densities': torch.from_numpy(inGrp['fluidDensity'][:]).to(device = device, dtype = dtype),
+            'densities': torch.from_numpy(inGrp['fluidDensity'][:]).to(device = device, dtype = dtype) * inFile.attrs['restDensity'],
             'areas': areas,
             'masses': areas * inFile.attrs['restDensity'],
             'supports': torch.ones_like(areas) * support, #torch.from_numpy(inGrp['fluidSupport'][:]).to(device = device, dtype = dtype),

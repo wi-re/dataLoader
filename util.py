@@ -250,3 +250,37 @@ def processFolder(folder, config: DataConfiguration):
         data.append(parseFile(inFile, config))
         inFile.close()
     return data
+
+
+from sphMath.enums import KernelType
+def kernelNameToKernel(kernel: str):
+    if isinstance(kernel, dict):
+        kernelName = kernel['name']
+    if isinstance(kernel, np.int64) or isinstance(kernel, int):
+        kernelName = KernelType(kernel).name
+    
+    if kernelName == 'Wendland2':
+        return KernelType.Wendland2
+    
+    for k in KernelType:
+        if k.name == kernelName:
+            return k
+    raise ValueError(f'Unknown kernel name: {kernelName}')
+
+from typing import List
+def buildRotationMatrix(angles : List[float], dim: int, device: torch.device = None, dtype: torch.dtype = None):
+    if dim == 1:
+        return torch.tensor([[1.0]], device=device, dtype=dtype)
+    elif dim == 2:
+        return torch.tensor([[torch.cos(angles), -torch.sin(angles)],
+                             [torch.sin(angles), torch.cos(angles)]], device=device, dtype=dtype)
+    elif dim == 3:
+        angle_phi = angles[0]
+        angle_theta = angles[1]
+        return torch.tensor([
+            [torch.cos(angle_phi) * torch.sin(angle_theta), -torch.sin(angle_phi), torch.cos(angle_phi) * torch.cos(angle_theta)],
+            [torch.sin(angle_phi) * torch.sin(angle_theta), torch.cos(angle_phi), torch.sin(angle_phi) * torch.cos(angle_theta)],
+            [torch.cos(angle_theta), 0, -torch.sin(angle_theta)]
+        ], device=device, dtype=dtype)
+    else:
+        raise ValueError(f"Unsupported dimension: {dim}")

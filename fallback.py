@@ -179,7 +179,7 @@ def radiusNaive(x, y, hx, hy, periodic : Optional[torch.Tensor] = None, minDomai
 
     return ii, jj#, distanceMatrix[adjacencyDense], distanceMatrices[adjacencyDense], supports
 
-
+import warnings
 def radiusSearch( 
         queryPointCloud: PointCloud,
         referencePointCloud: Optional[PointCloud],
@@ -196,6 +196,7 @@ def radiusSearch(
         hashMapLengthAlgorithm: str = 'primes'
         ):
     with torch.no_grad():
+        warnings.warn("Fallback implementation of radius search is being used.", UserWarning)
         # print(f'Using {algorithm} algorithm for radius search', flush = True)
         numQueryPoints = queryPointCloud.positions.shape[0]
         if referencePointCloud is not None:

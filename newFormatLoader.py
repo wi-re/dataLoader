@@ -350,7 +350,7 @@ def loadGroup_newFormat_v2(inFile, inGrp, staticFluidData, staticBoundaryData, k
         dynamicBoundaryData['normals'] = torch.from_numpy(inGrp['boundaryNormals'][:]).to(device = device, dtype = dtype) if 'boundaryNormals' in inGrp else dynamicBoundaryData['normals']
         dynamicBoundaryData['areas'] = torch.from_numpy(inGrp['boundaryArea'][:]).to(device = device, dtype = dtype) if 'boundaryArea' in inGrp else dynamicBoundaryData['areas']
         dynamicBoundaryData['velocities'] = torch.from_numpy(inGrp['boundaryVelocity'][:]).to(device = device, dtype = dtype) if 'boundaryVelocity' in inGrp else dynamicBoundaryData['velocities']
-        dynamicBoundaryData['densities'] = torch.from_numpy(inGrp['boundaryDensity'][:]).to(device = device, dtype = dtype) if 'boundaryDensity' in inGrp else dynamicBoundaryData['densities']
+        dynamicBoundaryData['densities'] = torch.from_numpy(inGrp['boundaryDensity'][:]).to(device = device, dtype = dtype) * inFile.attrs['restDensity']    if 'boundaryDensity' in inGrp else dynamicBoundaryData['densities']
         dynamicBoundaryData['supports'] = torch.from_numpy(inGrp['boundarySupport'][:]).to(device = device, dtype = dtype) if 'boundarySupport' in inGrp else dynamicBoundaryData['supports']
         dynamicBoundaryData['bodyIDs'] = torch.from_numpy(inGrp['boundaryBodyAssociation'][:]).to(device = device, dtype = torch.int64) if 'boundaryBodyAssociation' in inGrp else dynamicBoundaryData['bodyIDs']
     elif 'initial' in inFile:
@@ -363,7 +363,7 @@ def loadGroup_newFormat_v2(inFile, inGrp, staticFluidData, staticBoundaryData, k
                     dynamicBoundaryData[k] = staticBoundaryData[k]
 
         if 'boundaryDensity' in inGrp:
-            dynamicBoundaryData['densities'] = torch.from_numpy(inGrp['boundaryDensity'][:]).to(device = device, dtype = dtype)
+            dynamicBoundaryData['densities'] = torch.from_numpy(inGrp['boundaryDensity'][:]).to(device = device, dtype = dtype) * inFile.attrs['restDensity']   
         if 'boundaryVelocity' in inGrp:
             dynamicBoundaryData['velocities'] = torch.from_numpy(inGrp['boundaryVelocity'][:]).to(device = device, dtype = dtype)
         if 'boundaryPosition' in inGrp:
@@ -373,7 +373,7 @@ def loadGroup_newFormat_v2(inFile, inGrp, staticFluidData, staticBoundaryData, k
     else:
         dynamicBoundaryData = None
     if 'boundaryDensity' in inGrp:
-        dynamicBoundaryData['densities'] = torch.from_numpy(inGrp['boundaryDensity'][:]).to(device = device, dtype = dtype)
+        dynamicBoundaryData['densities'] = torch.from_numpy(inGrp['boundaryDensity'][:]).to(device = device, dtype = dtype) * inFile.attrs['restDensity']   
     if 'boundaryVelocity' in inGrp:
         dynamicBoundaryData['velocities'] = torch.from_numpy(inGrp['boundaryVelocity'][:]).to(device = device, dtype = dtype)
     if 'boundaryPosition' in inGrp:
@@ -396,7 +396,7 @@ def loadGroup_newFormat_v2(inFile, inGrp, staticFluidData, staticBoundaryData, k
     if 'fluidVelocity' in inGrp:
         fluidState['velocities'] = torch.from_numpy(inGrp['fluidVelocity'][:]).to(device = device, dtype = dtype)
     if 'fluidDensity' in inGrp:
-        fluidState['densities'] = torch.from_numpy(inGrp['fluidDensity'][:]).to(device = device, dtype = dtype)
+        fluidState['densities'] = torch.from_numpy(inGrp['fluidDensity'][:]).to(device = device, dtype = dtype) * inFile.attrs['restDensity']   
     if 'fluidGravity' in inGrp:
         fluidState['gravityAcceleration'] = torch.from_numpy(inGrp['fluidGravity'][:]).to(device = device, dtype = dtype)
     
@@ -443,7 +443,7 @@ def loadFrame_newFormat_v2(inFile, key: str, device: str = 'cpu', dtype: torch.d
             'positions': torch.from_numpy(inFile['initial']['fluid']['positions'][:]).to(device = device, dtype = dtype),
             'velocities': torch.from_numpy(inFile['initial']['fluid']['velocities'][:]).to(device = device, dtype = dtype),
             'gravityAcceleration': torch.zeros_like(torch.from_numpy(inFile['initial']['fluid']['velocities'][:]).to(device = device, dtype = dtype)),
-            'densities': torch.from_numpy(inFile['initial']['fluid']['densities'][:]).to(device = device, dtype = dtype),
+            'densities': torch.from_numpy(inFile['initial']['fluid']['densities'][:]).to(device = device, dtype = dtype) * inFile.attrs['restDensity']   ,
             'areas': torch.from_numpy(inFile['initial']['fluid']['areas'][:]).to(device = device, dtype = dtype),
             'masses': torch.from_numpy(inFile['initial']['fluid']['masses'][:]).to(device = device, dtype = dtype),
             'supports': computeSupport(torch.from_numpy(inFile['initial']['fluid']['areas'][:]).to(device = device, dtype = dtype), targetNeighbors, 2),
@@ -503,7 +503,7 @@ def loadFrame_newFormat_v2(inFile, key: str, device: str = 'cpu', dtype: torch.d
                 'areas': torch.from_numpy(inFile['boundaryInformation']['boundaryArea'][:]).to(device = device, dtype = dtype),
                 'masses': torch.from_numpy(inFile['boundaryInformation']['boundaryArea'][:]).to(device = device, dtype = dtype) * config['fluid']['rho0'],
                 'velocities': torch.from_numpy(inFile['boundaryInformation']['boundaryVelocity'][:]).to(device = device, dtype = dtype),
-                'densities': torch.from_numpy(inFile['boundaryInformation']['boundaryRestDensity'][:]).to(device = device, dtype = dtype),
+                'densities': torch.from_numpy(inFile['boundaryInformation']['boundaryRestDensity'][:]).to(device = device, dtype = dtype) * inFile.attrs['restDensity']   ,
                 'supports': torch.from_numpy(inFile['boundaryInformation']['boundarySupport'][:]).to(device = device, dtype = dtype),
                 'bodyIDs': torch.from_numpy(inFile['boundaryInformation']['boundaryBodyAssociation'][:]).to(device = device, dtype = torch.int64),
                 'numParticles': len(inFile['boundaryInformation']['boundaryPosition'][:]),
@@ -517,7 +517,7 @@ def loadFrame_newFormat_v2(inFile, key: str, device: str = 'cpu', dtype: torch.d
             'areas': torch.from_numpy(inFile['initial']['boundary']['areas'][:]).to(device = device, dtype = dtype),
             'masses': torch.from_numpy(inFile['initial']['boundary']['masses'][:]).to(device = device, dtype = dtype),
             'velocities': torch.from_numpy(inFile['initial']['boundary']['velocities'][:]).to(device = device, dtype = dtype),
-            'densities': torch.from_numpy(inFile['initial']['boundary']['densities'][:]).to(device = device, dtype = dtype),
+            'densities': torch.from_numpy(inFile['initial']['boundary']['densities'][:]).to(device = device, dtype = dtype) * inFile.attrs['restDensity']   ,
             'supports': computeSupport(torch.from_numpy(inFile['initial']['boundary']['areas'][:]).to(device = device, dtype = dtype), inFile.attrs['targetNeighbors'], 2),
             'bodyIDs': torch.from_numpy(inFile['initial']['boundary']['bodyIDs'][:]).to(device = device, dtype = torch.int64),
             'numParticles': len(inFile['initial']['boundary']['UID'][:]),

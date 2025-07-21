@@ -6,24 +6,13 @@ from neighborhood import DomainDescription, AugmentedDomainDescription
 from neighborhood import AugmentedDomainDescription, DomainDescription
 from typing import Union
 from typing import List
+from state import PointCloudWithKinds
+from neighborhood import batchNeighborsearch
+from batch import mergeTrajectoryStates, mergeBatch
+from loader import loadBatch
+
 import numpy as np
-    
-def buildRotationMatrix(angles : List[float], dim: int, device: torch.device = None, dtype: torch.dtype = None):
-    if dim == 1:
-        return torch.tensor([[1.0]], device=device, dtype=dtype)
-    elif dim == 2:
-        return torch.tensor([[torch.cos(angles), -torch.sin(angles)],
-                             [torch.sin(angles), torch.cos(angles)]], device=device, dtype=dtype)
-    elif dim == 3:
-        angle_phi = angles[0]
-        angle_theta = angles[1]
-        return torch.tensor([
-            [torch.cos(angle_phi) * torch.sin(angle_theta), -torch.sin(angle_phi), torch.cos(angle_phi) * torch.cos(angle_theta)],
-            [torch.sin(angle_phi) * torch.sin(angle_theta), torch.cos(angle_phi), torch.sin(angle_phi) * torch.cos(angle_theta)],
-            [torch.cos(angle_theta), 0, -torch.sin(angle_theta)]
-        ], device=device, dtype=dtype)
-    else:
-        raise ValueError(f"Unsupported dimension: {dim}")
+from util import buildRotationMatrix
      
 def getRotationMatrix(domain : AugmentedDomainDescription):
     if len(domain.angles) == 1:
@@ -147,7 +136,8 @@ def rotateState(state: Union[WeaklyCompressibleSPHState, CompressibleSPHState], 
             key=state.key,
             boundaryNormals=torch.einsum('ij, ni->nj', rotationMatrix, state.boundaryNormals) if state.boundaryNormals is not None else None,
             boundaryDistances=state.boundaryDistances if state.boundaryDistances is not None else None,
-            rigidBodies=[augmentRigidBody(body, rotationMatrix) for body in state.rigidBodies] if state.rigidBodies is not None else None
+            rigidBodies=[augmentRigidBody(body, rotationMatrix) for body in state.rigidBodies] if state.rigidBodies is not None else None,
+            batches=state.batches
         )
         return newState
     elif isinstance(state, CompressibleSPHState):
@@ -172,7 +162,115 @@ def rotateState(state: Union[WeaklyCompressibleSPHState, CompressibleSPHState], 
             alphas=state.alphas if state.alphas is not None else None,
             alpha0s=state.alpha0s if state.alpha0s is not None else None,
             divergence=state.divergence if state.divergence is not None else None,
+            batches=state.batches
         )
         return newState
     else:
         raise ValueError(f"Unsupported state type: {type(state)}")
+
+
+
+def augmentStates(
+        priorStates,
+        currentStates,
+        trajectoryStates,
+        domains,
+        configs,
+        augmentAngle: bool = True,
+        augmentFluidPosition: bool = False,
+        augmentBoundaryPosition: bool = False,
+        augmentPositionMagnitude: float = 0.01,
+        augmentPositionTrajectory: bool = False,
+        augmentPositionHistory: bool = False):
+
+    rotMats = []
+
+    augmentedDomains = []
+    augmentedPriorStates = []
+    augmentedCurrentStates = []
+    augmentedTrajectoryStates = []
+
+    if augmentAngle:
+        for i in range(len(domains)):
+            augmentAngle = torch.rand(1, device=domains[i].min.device, dtype=domains[i].min.dtype) * 2 * np.pi - np.pi
+            rotMat = buildRotationMatrix(augmentAngle, domains[i].dim, device=domains[i].min.device, dtype=domains[i].min.dtype)
+            rotMats.append(rotMat)
+
+        # augmentedStates = []
+        for i in range(len(currentStates)):
+            cState = currentStates[i]
+            rotMat = rotMats[i % len(rotMats)]
+            augmentedState = rotateState(cState, rotMat)
+            augmentedCurrentStates.append(augmentedState)
+            augmentedDomains.append(augmentDomain(domains[i], rotMat))
+            tStates = []
+            for t in range(len(trajectoryStates[i])):
+                tState = trajectoryStates[i][t]
+                augmentedTState = rotateState(tState, rotMat)
+                tStates.append(augmentedTState)
+            augmentedTrajectoryStates.append(tStates)
+            hStates = []
+            for h in range(len(priorStates[i])):
+                hState = priorStates[i][h]
+                augmentedHState = rotateState(hState, rotMat)
+                hStates.append(augmentedHState)
+            augmentedPriorStates.append(hStates)
+    else:
+        augmentedCurrentStates = currentStates
+        augmentedDomains = domains
+        augmentedTrajectoryStates = trajectoryStates
+        augmentedPriorStates = priorStates
+
+    if augmentFluidPosition:
+        for i in range(len(domains)):
+            augmentedCurrentStates[i].positions[augmentedCurrentStates[i].kinds == 0] += torch.randn_like(augmentedCurrentStates[i].positions[augmentedCurrentStates[i].kinds == 0]) * augmentPositionMagnitude * augmentedCurrentStates[i].supports[augmentedCurrentStates[i].kinds == 0][:,None]
+            for t in range(len(augmentedTrajectoryStates[i])):
+                augmentedTrajectoryStates[i][t].positions[augmentedTrajectoryStates[i][t].kinds == 0] += torch.randn_like(augmentedTrajectoryStates[i][t].positions[augmentedTrajectoryStates[i][t].kinds == 0]) * augmentPositionMagnitude * augmentedTrajectoryStates[i][t].supports[augmentedTrajectoryStates[i][t].kinds == 0][:,None]
+            for h in range(len(augmentedPriorStates[i])):
+                augmentedPriorStates[i][h].positions[augmentedPriorStates[i][h].kinds == 0] += torch.randn_like(augmentedPriorStates[i][h].positions[augmentedPriorStates[i][h].kinds == 0]) * augmentPositionMagnitude * augmentedPriorStates[i][h].supports[augmentedPriorStates[i][h].kinds == 0][:,None]
+
+    if augmentBoundaryPosition:
+        for i in range(len(domains)):
+            augmentedCurrentStates[i].positions[augmentedCurrentStates[i].kinds == 1] += torch.randn_like(augmentedCurrentStates[i].positions[augmentedCurrentStates[i].kinds == 1]) * augmentPositionMagnitude * augmentedCurrentStates[i].supports[augmentedCurrentStates[i].kinds == 1][:,None]
+            for t in range(len(augmentedTrajectoryStates[i])):
+                augmentedTrajectoryStates[i][t].positions[augmentedTrajectoryStates[i][t].kinds == 1] += torch.randn_like(augmentedTrajectoryStates[i][t].positions[augmentedTrajectoryStates[i][t].kinds == 1]) * augmentPositionMagnitude * augmentedTrajectoryStates[i][t].supports[augmentedTrajectoryStates[i][t].kinds == 1][:,None]
+            for h in range(len(augmentedPriorStates[i])):
+                augmentedPriorStates[i][h].positions[augmentedPriorStates[i][h].kinds == 1] += torch.randn_like(augmentedPriorStates[i][h].positions[augmentedPriorStates[i][h].kinds == 1]) * augmentPositionMagnitude * augmentedPriorStates[i][h].supports[augmentedPriorStates[i][h].kinds == 1][:,None]
+
+
+    return augmentedPriorStates, augmentedCurrentStates, augmentedTrajectoryStates, augmentedDomains, rotMats
+
+
+
+def loadAugmentedBatch(
+        dataset, batch, configuration, device = 'cpu', dtype = torch.float32,
+        augmentAngle: bool = True,
+        augmentFluidPosition: bool = False,
+        augmentBoundaryPosition: bool = False,
+        augmentPositionMagnitude: float = 0.01,
+        augmentPositionTrajectory: bool = False,
+        augmentPositionHistory: bool = False
+):
+    priorStates, currentStates, trajectoryStates, domains, configs = loadBatch(dataset, batch, configuration, device=device, dtype=dtype)
+    
+    priorStates, currentStates, trajectoryStates, augmentedDomains, rotMats = augmentStates(
+        priorStates,
+        currentStates,
+        trajectoryStates,
+        domains,
+        configs,
+        augmentAngle=augmentAngle,
+        augmentFluidPosition=augmentFluidPosition,
+        augmentBoundaryPosition=augmentBoundaryPosition,
+        augmentPositionMagnitude=augmentPositionMagnitude,
+        augmentPositionTrajectory=augmentPositionTrajectory,
+        augmentPositionHistory=augmentPositionHistory
+    )
+    currentState = mergeBatch(currentStates)
+    trajectoryState = mergeTrajectoryStates(trajectoryStates)
+    priorState = mergeTrajectoryStates(priorStates)
+
+
+    mergedNeighborhood, neighborhoods = batchNeighborsearch(currentState, augmentedDomains, configs)
+
+    return priorState, currentState, trajectoryState, augmentedDomains, rotMats, configs, mergedNeighborhood

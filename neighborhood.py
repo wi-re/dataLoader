@@ -73,6 +73,21 @@ class SparseNeighborhood:
     
     domain: 'AugmentedDomainDescription'
 
+@dataclass(slots=True)
+class SparseBatchedNeighborhood:
+    row: torch.Tensor
+    col: torch.Tensor
+    batch: torch.Tensor
+
+    numRows: List[int]
+    numCols: List[int]
+    
+    points_a: List['PointCloud']
+    points_b: List['PointCloud']
+    
+    domain: List['AugmentedDomainDescription']
+
+import numpy as np
 def filterNeighborhoodByKind(particleState, sparseNeighborhood : SparseNeighborhood, which : str = 'normal'):
     if which == 'all':
         return sparseNeighborhood
@@ -119,6 +134,18 @@ def filterNeighborhoodByKind(particleState, sparseNeighborhood : SparseNeighborh
     # newNumRows = torch.sum(maskA)
     # newNumCols = torch.sum(maskB)
     
+    if isinstance(sparseNeighborhood, SparseBatchedNeighborhood):
+        return SparseBatchedNeighborhood(
+            row = i_filtered,
+            col = j_filtered,
+            batch = sparseNeighborhood.batch[mask],
+            numRows = sparseNeighborhood.numRows,
+            numCols = sparseNeighborhood.numCols,
+            points_a = sparseNeighborhood.points_a,
+            points_b = sparseNeighborhood.points_b,
+            domain = sparseNeighborhood.domain
+        )
+
     return SparseNeighborhood(
         row = i_filtered,
         col = j_filtered,
@@ -155,10 +182,12 @@ def evalEdgeKinds(kinds : torch.Tensor, i : torch.Tensor, j: torch.Tensor):
 
 
 
-from augment import buildRotationMatrix
+from util import buildRotationMatrix
+
 def neighborSearch(state, domain, config):
     points = PointCloud(state.positions, state.supports)
     if isinstance(domain, AugmentedDomainDescription):
+        # print(f'Using angles: {domain.angles}, rotation matrix: {buildRotationMatrix(torch.tensor(domain.angles, device=domain.device, dtype=domain.dtype), domain.dim, device=domain.device, dtype=domain.dtype)}')
         rotationMatrix = buildRotationMatrix(torch.tensor(domain.angles, device=domain.device, dtype=domain.dtype), domain.dim, device=domain.device, dtype=domain.dtype)
         invRotationMatrix = torch.linalg.inv(rotationMatrix)
         # print(f'Using angles: {domain.angles}, rotation matrix: {rotationMatrix}')
@@ -181,6 +210,9 @@ def neighborSearch(state, domain, config):
         returnStructure=False,
         algorithm='compact'
     )
+
+    # print(f'Domain: {domain.min} - {domain.max}, periodic: {domain.periodic}, dim: {domain.dim}')
+
     sparseNeighborhood = SparseNeighborhood(
         row = fullAdjacency.row,
         col = fullAdjacency.col,
@@ -218,14 +250,23 @@ def coo_to_csr(coo: SparseCOO, isSorted: bool = False) -> SparseCSR:
         row = coo.row
         col = coo.col
 
+    # if isinstance(coo : SparseBatchedNeighborhood)
+
     # print(f'Converting COO To CSR for matrix of shape {coo.numRows} x {coo.numCols}')
     # print(f'Number of Entries: {row.shape[0]}/{col.shape[0]}')
     jj, nit = torch.unique(row, return_counts=True)
-    nj = torch.zeros(coo.numRows, dtype=coo.row.dtype, device=coo.row.device)
+    if isinstance(coo.numRows, int):
+        nj = torch.zeros(coo.numRows, dtype=coo.row.dtype, device=coo.row.device)
+    else:
+        nj = torch.zeros(np.sum(coo.numRows), dtype=coo.row.dtype, device=coo.row.device)
     nj[jj] = nit
     # print(f'Number of neighbors: {nj} ({nj.sum()} total, shape {nj.shape})')
 
-    indptr = torch.zeros(coo.numRows + 1, dtype=torch.int64, device=coo.row.device)
+    if isinstance(coo.numRows, int):
+        indptr = torch.zeros(coo.numRows + 1, dtype=torch.int64, device=coo.row.device)
+    else:
+        indptr = torch.zeros(np.sum(coo.numRows) + 1, dtype=torch.int64, device=coo.row.device)
+
     indptr[1:] = torch.cumsum(nj, 0)
     # print(f'Row pointers: {indptr} ({indptr.shape})')
     indptr = indptr.int()
@@ -247,6 +288,11 @@ def evalDistanceTensor_(
         positions_a: torch.Tensor, positions_b: torch.Tensor,
         support_a: torch.Tensor, support_b: torch.Tensor,
         angles: Optional[torch.Tensor] = None,):
+    
+    # print(
+    #     f'row: {row.shape}, col: {col.shape}, minD: {minD.shape}, maxD: {maxD.shape}, periodicity: {periodicity.shape}, positions_a: {positions_a.shape}, positions_b: {positions_b.shape}, support_a: {support_a.shape}, support_b: {support_b.shape}, angles: {angles.shape if angles is not None else None}'
+    # )
+
     # print('evalDistanceTensor Begin')
     pos_ai = positions_a[row]
     pos_bi = positions_b[col]
@@ -296,12 +342,89 @@ def evalDistanceTensor_(
     return rij, xij_, h_i, h_j
 
 def evalDistanceTensor(neighborhood):
-    # print('evalDistanceTensor Begin')
-    return evalDistanceTensor_(
-        neighborhood.row, neighborhood.col,
-        neighborhood.domain.min, neighborhood.domain.max,
-        neighborhood.domain.periodic,
-        neighborhood.points_a.positions, neighborhood.points_b.positions,
-        neighborhood.points_a.supports, neighborhood.points_b.supports,
-        torch.tensor(neighborhood.domain.angles, dtype = neighborhood.points_a.positions.dtype, device = neighborhood.points_a.positions.device) if isinstance(neighborhood.domain, AugmentedDomainDescription) else None
+    if isinstance(neighborhood, SparseNeighborhood) and not isinstance(neighborhood.domain, list):
+        # print('evalDistanceTensor Begin')
+        # print(f'Evaluating distance tensor for neighborhood with {neighborhood.row.shape[0]} entries')
+        return evalDistanceTensor_(
+            neighborhood.row, neighborhood.col,
+            neighborhood.domain.min, neighborhood.domain.max,
+            neighborhood.domain.periodic,
+            neighborhood.points_a.positions, neighborhood.points_b.positions,
+            neighborhood.points_a.supports, neighborhood.points_b.supports,
+            torch.tensor(neighborhood.domain.angles, dtype=neighborhood.points_a.positions.dtype, device=neighborhood.points_a.positions.device) if isinstance(neighborhood.domain, AugmentedDomainDescription) else None
+        )
+    elif isinstance(neighborhood, SparseBatchedNeighborhood) or isinstance(neighborhood.domain, list):
+        # print(f'Evaluating distance tensor for batched neighborhood with {len(neighborhood.points_a)} batches')
+        rijs, xijs, his, hjs = [], [], [], []
+        offset = 0
+        for i in range(len(neighborhood.points_a)):
+            rij, xij, hi, hj = evalDistanceTensor_(
+                neighborhood.row[neighborhood.batch == i] - offset,
+                neighborhood.col[neighborhood.batch == i] - offset,
+                neighborhood.domain[i].min, neighborhood.domain[i].max,
+                neighborhood.domain[i].periodic,
+                neighborhood.points_a[i].positions, neighborhood.points_b[i].positions,
+                neighborhood.points_a[i].supports, neighborhood.points_b[i].supports,
+                torch.tensor(neighborhood.domain[i].angles, dtype=neighborhood.points_a[i].positions.dtype, device=neighborhood.points_a[i].positions.device) if isinstance(neighborhood.domain[i], AugmentedDomainDescription) else None
+            )
+            offset += neighborhood.numRows[i]
+            rijs.append(rij)
+            xijs.append(xij)
+            his.append(hi)
+            hjs.append(hj)
+        rijs = torch.cat(rijs, dim=0)
+        xijs = torch.cat(xijs, dim=0)
+        his = torch.cat(his, dim=0)
+        hjs = torch.cat(hjs, dim=0)
+        return rijs, xijs, his, hjs
+        # # print('evalDistanceTensor Begin')
+        # return evalDistanceTensor_(
+        #     neighborhood.row, neighborhood.col,
+        #     neighborhood.domain.min, neighborhood.domain.max,
+        #     neighborhood.domain.periodic,
+        #     neighborhood.points_a.positions, neighborhood.points_b.positions,
+        #     neighborhood.points_a.supports, neighborhood.points_b.supports,
+        #     torch.tensor(neighborhood.domain.angles, dtype = neighborhood.points_a.positions.dtype, device = neighborhood.points_a.positions.device) if isinstance(neighborhood.domain, AugmentedDomainDescription) else None
+        # )
+    else:
+        raise TypeError(f'Unsupported neighborhood type: {type(neighborhood)}. Expected SparseNeighborhood or SparseBatchedNeighborhood.')
+
+
+from state import PointCloudWithKinds
+
+def batchNeighborsearch(mergedState, domains, configs):
+    neighborhoods = []
+    if len(domains) != len(configs):
+        raise ValueError("The number of domains and configs must match.")
+    if len(domains) == 1:
+        return neighborSearch(mergedState, domains[0], configs[0]), None
+    for ib, (domain, config) in enumerate(zip(domains, configs)):
+        cloud = PointCloudWithKinds(positions=mergedState.positions[mergedState.batches == ib],
+                                     supports=mergedState.supports[mergedState.batches == ib],
+                                     kinds=mergedState.kinds[mergedState.batches == ib])
+        neighborhood = neighborSearch(cloud, domain, config)
+        neighborhoods.append(neighborhood)
+
+    rows = []
+    cols = []
+    offset = 0
+    for i, neighborhood in enumerate(neighborhoods):
+        rows.append(neighborhood.row + offset)
+        cols.append(neighborhood.col + offset)
+        offset += neighborhood.numRows
+    mergedNeighborhood = SparseBatchedNeighborhood(
+        row = torch.cat(rows, dim=0),
+        col = torch.cat(cols, dim=0),
+        batch= mergedState.batches[torch.cat(rows, dim=0)],
+
+        numRows = [n.numRows for n in neighborhoods],
+        numCols = [n.numCols for n in neighborhoods],
+
+        points_a = [n.points_a for n in neighborhoods],
+        points_b = [n.points_b for n in neighborhoods],
+
+        domain = domains
     )
+    return mergedNeighborhood, neighborhoods
+
+    # return neighborhoods

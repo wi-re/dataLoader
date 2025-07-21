@@ -1,6 +1,7 @@
 from testcaseIILoader import loadTestcaseIIState
 from newFormatLoader import loadNewFormatState
 from diffSPHLoader import loadDiffSPHState
+from state import WeaklyCompressibleSPHState, CompressibleSPHState, RigidBodyState
 
 from util import getStyle
 
@@ -30,10 +31,32 @@ def loadEntry(entry, configuration, device = 'cpu', dtype = torch.float32):
 
 def loadBatch(dataset, batch, configuration, device = 'cpu', dtype = torch.float32):
     priorStates, currentState, nextStates, domains, configs, = [], [], [], [], []
-    for b in batch:
+    batched = isinstance(batch, list)
+    for ib, b in enumerate(batch):
         entry = dataset[b]
 
         prior, current, nexts, dom, cfg = loadEntry(entry, configuration, device, dtype)
+
+        if batched:
+            for p in range(len(prior)):
+                prior[p].batches = torch.ones_like(prior[p].UIDs) * ib
+            current.batches = torch.ones_like(current.UIDs) * ib
+            for n in range(len(nexts)):
+                nexts[n].batches = torch.ones_like(nexts[n].UIDs) * ib
+
+            if isinstance(current, WeaklyCompressibleSPHState):
+                if current.rigidBodies is not None:
+                    for rb in current.rigidBodies:
+                        rb.batchID = ib
+                    for rb in prior:
+                        if rb.rigidBodies is not None:
+                            for rbb in rb.rigidBodies:
+                                rbb.batchID = ib
+                    for n in nexts:
+                        if n.rigidBodies is not None:
+                            for rb in n.rigidBodies:
+                                rb.batchID = ib
+
         priorStates.append(prior)
         currentState.append(current)
         nextStates.append(nexts)

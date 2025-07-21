@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import torch
-from typing import Optional
+from typing import Optional, List, Union
 
 @dataclass
 class DataConfiguration:
@@ -23,6 +23,7 @@ class RigidBodyState:
     linearVelocity: torch.Tensor
     mass: torch.Tensor
     inertia: torch.Tensor
+    batchID: int = 0
 from typing import List, Tuple, Dict
 
 # @torch.jit.script
@@ -40,16 +41,17 @@ class WeaklyCompressibleSPHState:
     UIDs : torch.Tensor # unique identifiers for particles, ghost particles have negative UIDs
 
     
-    numParticles: int
-    time: float
-    dt: float
-    timestep: int
-    key: str
+    numParticles: Union[int, List[int]]
+    time: Union[float, List[float]]
+    dt: Union[float, List[float]]
+    timestep: Union[int, List[int]]
+    key: Union[str, List[str]]
 
     boundaryNormals: Optional[torch.Tensor] = None
     boundaryDistances: Optional[torch.Tensor] = None
 
     rigidBodies: Optional[List[RigidBodyState]] = None
+    batches: Optional[torch.Tensor] = None # batch IDs for particles, used for parallel processing
 
 @dataclass(slots=True)
 class CompressibleSPHState:
@@ -69,16 +71,22 @@ class CompressibleSPHState:
     pressures: torch.Tensor
     soundspeeds: torch.Tensor
 
-    numParticles: int
-    time: float
-    dt: float
-    timestep: int
-    key: str
+    numParticles: Union[int, List[int]]
+    time: Union[float, List[float]]
+    dt: Union[float, List[float]]
+    timestep: Union[int, List[int]]
+    key: Union[str, List[str]]
 
     alphas: Optional[torch.Tensor] = None # alpha values for compressible SPH
     alpha0s: Optional[torch.Tensor] = None # initial alpha values for compressible SPH
     divergence: Optional[torch.Tensor] = None # divergence of the velocity field
+    batches: Optional[torch.Tensor] = None # batch IDs for particles, used for parallel processing
 
+@dataclass(slots = True)
+class PointCloudWithKinds:
+    positions: torch.Tensor
+    supports: torch.Tensor
+    kinds: torch.Tensor
 
 def convertNewFormatToWCSPH(inFile, key, state):
     numFluidParticles = state['fluid']['numParticles']
